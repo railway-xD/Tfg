@@ -124,8 +124,11 @@ async def startmatch(message: Message):
     match = await active_match(message.chat.id)
     if not match or not await require_host(message, match):
         await message.reply("❌ Only Host Can Control This Game!"); return
-    if len(match["teams"]["A"]["members"]) < 2 or len(match["teams"]["B"]["members"]) < 2:
-        await message.reply("Each team needs at least 2 players to start a match."); return
+    if len(match["teams"]["A"]["members"]) < 1 or len(match["teams"]["B"]["members"]) < 1:
+    await message.reply(
+        "❌ Both teams must have at least 1 player to start the match."
+    )
+    return
     await matches.update_one({"_id": match["_id"]}, {"$set": {"stage": "overs"}})
     await message.answer(f"🎮 Host: {mention(match['host_id'], match['host_name'])} choose overs:", reply_markup=overs_kb())
 
