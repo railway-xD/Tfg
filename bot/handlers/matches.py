@@ -205,7 +205,7 @@ async def extend_join(message: Message):
     match = await active_match(message.chat.id)
     if not match or not await require_host(message, match):
         await message.reply("❌ Only Host Can Control This Game!"); return
-    match["join_deadline"] = datetime.now(timezone.utc) + timedelta(minutes=30)
+    match["join_deadline"] = datetime.now(timezone.utc) + timedelta(minutes=1)
     await matches.update_one({"_id": match["_id"]}, {"$set": {"join_deadline": match["join_deadline"]}})
     await message.reply("⏱ Joining time extended by 5 minutes!")
 
@@ -309,19 +309,67 @@ async def choose_captain(message: Message):
 @router.callback_query(F.data.startswith("captain"))
 async def captain_selected(callback: CallbackQuery):
     match = await active_match(callback.message.chat.id)
+
     if not match or not await require_host(callback, match):
-        await callback.answer("Only Host Can Control This Game!", show_alert=True); return
+        await callback.answer(
+            "Only Host Can Control This Game!",
+            show_alert=True
+        )
+        return
+
     parts = callback.data.split(":")
     side = parts[0][-1]
     uid = int(parts[-1])
+
     other = "B" if side == "A" else "A"
+
     if match["teams"][other].get("captain_id") == uid:
-        await callback.answer("One player cannot captain both teams.", show_alert=True); return
-    await matches.update_one({"_id": match["_id"]}, {"$set": {f"teams.{side}.captain_id": uid}})
-    await callback.answer(f"Team {side} captain selected!")
+        await callback.answer(
+            "One player cannot captain both teams.",
+            show_alert=True
+        )
+        return
+
+    team = match["teams"][side]
+
+    player = next(
+        (p for p in team["members"] if p["user_id"] == uid),
+        None
+    )
+
+    if not player:
+        await callback.answer("Player not found!", show_alert=True)
+        return
+
+    await matches.update_one(
+        {"_id": match["_id"]},
+        {"$set": {f"teams.{side}.captain_id": uid}}
+    )
+
     match["teams"][side]["captain_id"] = uid
-    if side == "B" and match["teams"]["A"].get("captain_id"):
-        await callback.message.answer("🎲 TOSS TIME!", reply_markup=toss_kb())
+
+    captain = mention(uid, player["name"])
+
+    await callback.answer("Captain Selected!")
+
+    if side == "A":
+        await callback.message.answer(
+            f"🔵 <b>TEAM A CAPTAIN: {captain}</b>"
+        )
+    else:
+        await callback.message.answer(
+            f"🔴 <b>TEAM B CAPTAIN: {captain}</b>"
+        )
+
+    captain_a = match["teams"]["A"].get("captain_id")
+    captain_b = match["teams"]["B"].get("captain_id")
+
+    if captain_a and captain_b:
+        await callback.message.answer(
+            "👑 <b>BOTH TEAM CAPTAINS SELECTED!</b>\n\n"
+            "🎲 <b>NOW IT'S TOSS TIME!</b>",
+            reply_markup=toss_kb()
+        )
 
 @router.message(Command("toss"))
 async def toss_cmd(message: Message):
