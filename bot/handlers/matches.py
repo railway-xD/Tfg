@@ -79,36 +79,126 @@ async def claim_host(callback: CallbackQuery):
     await callback.message.answer(await roster_text(doc), reply_markup=join_kb())
     await callback.answer("You are the host!")
 
-async def join_team(message: Message, side: str):
-    match = await active_match(message.chat.id)
+
+async def process_team_join(chat_id, user, side):
+    if side not in ("A", "B"):
+        return "invalid", None
+
+    match = await active_match(chat_id)
+
     if not match or match.get("stage") != "lobby":
-        await message.reply("❌ No open team lobby right now.")
-        return
-    if datetime.now(timezone.utc) > match["join_deadline"]:
-        await message.reply("⏱ Joining time is over. Ask the host to use /extend.")
-        return
-    uid = message.from_user.id
-    for s in ("A", "B"):
-        if any(p["user_id"] == uid for p in match["teams"][s]["members"]):
-            await message.reply("You have already joined a team.")
-            return
-    match["teams"][side]["members"].append({"user_id": uid, "name": message.from_user.full_name, "is_ai": False})
-    await matches.update_one({"_id": match["_id"]}, {"$set": {"teams": match["teams"]}})
-    await message.answer(await roster_text(match), reply_markup=join_kb())
+        return "closed", match
+
+    now = datetime.now(timezone.utc)
+    deadline = match.get("join_deadline")
+
+    if deadline and now > deadline:
+        return "expired", match
+
+    uid = user.id
+
+    # Prevent joining either team more than once.
+    for team_side in ("A", "B"):
+        if any(
+            int(p.get("user_id", 0)) == uid
+            for p in match["teams"][team_side]["members"]
+        ):
+            return "already_joined", match
+
+    # Atomic update: the same user cannot join both teams,
+    # even if two Join buttons are tapped almost simultaneously.
+    result = await matches.update_one(
+        {
+            "_id": match["_id"],
+            "stage": "lobby",
+            "teams.A.members.user_id": {"$ne": uid},
+            "teams.B.members.user_id": {"$ne": uid},
+        },
+        {
+            "$push": {
+                f"teams.{side}.members": {
+                    "user_id": uid,
+                    "name": user.full_name,
+                    "is_ai": False
+                }
+            }
+        }
+    )
+
+    if result.modified_count == 0:
+        latest = await matches.find_one({"_id": match["_id"]})
+
+        if latest and any(
+            any(int(p.get("user_id", 0)) == uid
+                for p in latest["teams"][s]["members"])
+            for s in ("A", "B")
+        ):
+            return "already_joined", latest
+
+        return "closed", latest
+
+    updated_match = await matches.find_one({"_id": match["_id"]})
+    return "joined", updated_match
+
+
+async def send_join_result(message, status, match):
+    if status == "joined":
+        await message.answer(
+            await roster_text(match),
+            reply_markup=join_kb()
+        )
+    elif status == "already_joined":
+        await message.answer("⚠️ You have already joined a team!")
+    elif status == "expired":
+        await message.answer(
+            "⏱ Joining time is over. Ask the host to use /extend."
+        )
+    elif status == "invalid":
+        await message.answer("❌ Invalid team selection.")
+    else:
+        await message.answer("❌ No open team lobby right now.")
+
 
 @router.message(Command("join_a"))
-async def join_a(message: Message): await join_team(message, "A")
+async def join_a(message: Message):
+    status, match = await process_team_join(
+        message.chat.id, message.from_user, "A"
+    )
+    await send_join_result(message, status, match)
+
 
 @router.message(Command("join_b"))
-async def join_b(message: Message): await join_team(message, "B")
+async def join_b(message: Message):
+    status, match = await process_team_join(
+        message.chat.id, message.from_user, "B"
+    )
+    await send_join_result(message, status, match)
+
 
 @router.callback_query(F.data.startswith("join:"))
 async def join_button(callback: CallbackQuery):
-    side = callback.data.split(":")[1]
-    class Proxy: pass
-    proxy = Proxy(); proxy.chat = callback.message.chat; proxy.from_user = callback.from_user; proxy.reply = callback.message.answer; proxy.answer = callback.message.answer
-    await join_team(proxy, side)
-    await callback.answer()
+    side = callback.data.split(":", 1)[1]
+
+    status, match = await process_team_join(
+        callback.message.chat.id,
+        callback.from_user,
+        side
+    )
+
+    await callback.answer(
+        "Joined Team A!" if status == "joined" and side == "A"
+        else "Joined Team B!" if status == "joined" and side == "B"
+        else "Already joined a team!" if status == "already_joined"
+        else "Joining is closed!" if status in ("closed", "expired")
+        else "Invalid team!",
+        show_alert=status != "joined"
+    )
+
+    if status == "joined":
+        await callback.message.answer(
+            await roster_text(match),
+            reply_markup=join_kb()
+        )
 
 @router.message(Command("extend"))
 async def extend_join(message: Message):
