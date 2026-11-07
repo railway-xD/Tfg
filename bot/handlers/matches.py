@@ -115,22 +115,36 @@ async def extend_join(message: Message):
     match = await active_match(message.chat.id)
     if not match or not await require_host(message, match):
         await message.reply("❌ Only Host Can Control This Game!"); return
-    match["join_deadline"] = datetime.now(timezone.utc) + timedelta(minutes=5)
+    match["join_deadline"] = datetime.now(timezone.utc) + timedelta(minutes=30)
     await matches.update_one({"_id": match["_id"]}, {"$set": {"join_deadline": match["join_deadline"]}})
     await message.reply("⏱ Joining time extended by 5 minutes!")
 
 @router.message(Command("startmatch"))
 async def startmatch(message: Message):
     match = await active_match(message.chat.id)
+
     if not match or not await require_host(message, match):
-        await message.reply("❌ Only Host Can Control This Game!"); return
-    if len(match["teams"]["A"]["members"]) < 1 or len(match["teams"]["B"]["members"]) < 1:
-    await message.reply(
-        "❌ Both teams must have at least 1 player to start the match."
+        await message.reply("❌ Only Host Can Control This Game!")
+        return
+
+    if (
+        len(match["teams"]["A"]["members"]) < 1
+        or len(match["teams"]["B"]["members"]) < 1
+    ):
+        await message.reply(
+            "❌ Both teams must have at least 1 player to start the match."
+        )
+        return
+
+    await matches.update_one(
+        {"_id": match["_id"]},
+        {"$set": {"stage": "overs"}}
     )
-    return
-    await matches.update_one({"_id": match["_id"]}, {"$set": {"stage": "overs"}})
-    await message.answer(f"🎮 Host: {mention(match['host_id'], match['host_name'])} choose overs:", reply_markup=overs_kb())
+
+    await message.answer(
+        f"🎮 Host: {mention(match['host_id'], match['host_name'])} choose overs:",
+        reply_markup=overs_kb()
+    )
 
 @router.callback_query(F.data.startswith("overs:"))
 async def choose_overs(callback: CallbackQuery):
