@@ -557,8 +557,6 @@ async def confirm_pick(callback: CallbackQuery):
 
     if latest:
         await _announce_next_ball(callback.message, latest)
-
-
 async def _announce_next_ball(message, match):
     inn = match["innings"][match["current_innings"] - 1]
     current = match.get("current", {})
@@ -568,6 +566,7 @@ async def _announce_next_ball(message, match):
     bowler = _member_any(match, current.get("bowler_id"))[0]
 
     if not all((striker, non_striker, bowler)):
+        await message.answer("Player selection is incomplete.")
         return
 
     bot_user = await message.bot.get_me()
@@ -591,7 +590,8 @@ async def _announce_next_ball(message, match):
         f"[{inn.get('batters', {}).get(str(striker['user_id']), {}).get('runs', 0)}(0b)]",
         reply_markup=kb
     )
-    @router.message(CommandStart())
+
+@router.message(CommandStart())
 async def bowl_deep_link(message: Message, command: CommandObject):
     args = command.args or ""
 
@@ -618,6 +618,7 @@ async def bowl_deep_link(message: Message, command: CommandObject):
 
     inn = match["innings"][match["current_innings"] - 1]
     current = match.get("current", {})
+
     striker = _member_any(match, current.get("striker_id"))[0]
 
     if not striker:
@@ -628,23 +629,20 @@ async def bowl_deep_link(message: Message, command: CommandObject):
         return
 
     turn_id = (
-        f"{match['_id']}:{inn['number']}:"
-        f"{inn['legal_balls']}:{current.get('bowler_id')}:"
-        f"{uuid.uuid4().hex[:10]}"
+        f"{match['_id']}:{inn['number']}:{inn['legal_balls']}:"
+        f"{current.get('bowler_id')}:{uuid.uuid4().hex[:10]}"
     )
 
     deadline = datetime.now(timezone.utc) + timedelta(seconds=60)
 
     await matches.update_one(
         {"_id": match["_id"]},
-        {
-            "$set": {
-                "current.turn_id": turn_id,
-                "current.bowler_deadline": deadline,
-                "current.pending_bowl": None,
-                "current.timeout": False
-            }
-        }
+        {"$set": {
+            "current.turn_id": turn_id,
+            "current.bowler_deadline": deadline,
+            "current.pending_bowl": None,
+            "current.timeout": False
+        }}
     )
 
     await message.answer(
@@ -653,7 +651,7 @@ async def bowl_deep_link(message: Message, command: CommandObject):
         f"🏏 Batter: {mention(striker['user_id'], striker['name'])}\n"
         "🔢 Send 1-6 (NOT 0!)\n"
         "━━━━━━━━━━━━━━━━\n"
-        f"🎳 {inn['legal_balls']//6}.{inn['legal_balls']%6} "
+        f"🎳 {inn['legal_balls'] // 6}.{inn['legal_balls'] % 6} "
         f"of {match['settings'].get('overs', '?')}\n"
         "⏱ 1 minute!"
     )
@@ -666,8 +664,7 @@ async def bowl_deep_link(message: Message, command: CommandObject):
             turn_id
         )
     )
-
-
+    
 async def resume_pending_timeouts(bot):
     """Restore timeout tasks after a Railway/container restart."""
     cursor = matches.find({
