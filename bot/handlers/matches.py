@@ -444,17 +444,42 @@ async def endgame(message: Message):
 async def add_player_command(message: Message):
     match = await active_match(message.chat.id)
     if not match or not await require_host(message, match):
-        await message.reply("❌ Only Host Can Control This Game!"); return
-    if not message.reply_to_message or not message.reply_to_message.from_user:
-        await message.reply("Reply to the player's message with /add_a or /add_b."); return
-    side = "A" if message.text.split()[0].endswith("add_a") else "B"
-    user = message.reply_to_message.from_user
-    if any(p["user_id"] == user.id for s in ("A", "B") for p in match["teams"][s]["members"]):
-        await message.reply("That player is already in a team."); return
-    match["teams"][side]["members"].append({"user_id": user.id, "name": user.full_name, "is_ai": False})
-    await matches.update_one({"_id": match["_id"]}, {"$set": {"teams": match["teams"]}})
-    await message.answer(await roster_text(match), reply_markup=join_kb())
+        await message.reply("❌ Only Host Can Control This Game!")
+        return
 
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+        await message.reply("Reply to the player's message with /add_a or /add_b.")
+        return
+
+    command = message.text.split(maxsplit=1)[0].split("@")[0].lower()
+    side = "A" if command == "/add_a" else "B"
+
+    user = message.reply_to_message.from_user
+
+    if any(
+        p["user_id"] == user.id
+        for s in ("A", "B")
+        for p in match["teams"][s]["members"]
+    ):
+        await message.reply("That player is already in a team.")
+        return
+
+    match["teams"][side]["members"].append({
+        "user_id": user.id,
+        "name": user.full_name,
+        "is_ai": False
+    })
+
+    await matches.update_one(
+        {"_id": match["_id"]},
+        {"$set": {"teams": match["teams"]}}
+    )
+
+    await message.answer(
+        await roster_text(match),
+        reply_markup=join_kb()
+    )
+    
 @router.message(Command("remove_player"))
 async def remove_player_command(message: Message):
     match = await active_match(message.chat.id)
