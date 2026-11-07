@@ -326,9 +326,44 @@ async def captain_selected(callback: CallbackQuery):
 @router.message(Command("toss"))
 async def toss_cmd(message: Message):
     match = await active_match(message.chat.id)
+
     if not match or not await require_host(message, match):
-        await message.reply("❌ Only Host Can Control This Game!"); return
-    await message.answer("🎲 TOSS TIME!", reply_markup=toss_kb())
+        await message.reply("❌ Only Host Can Control This Game!")
+        return
+
+    team_a = match["teams"]["A"]
+    team_b = match["teams"]["B"]
+
+    captain_a = team_a.get("captain_id")
+    captain_b = team_b.get("captain_id")
+
+    if not captain_a or not captain_b:
+        await message.reply("❌ First select both team captains!")
+        return
+
+    def get_captain(team, uid):
+        player = next(
+            (p for p in team["members"] if p["user_id"] == uid),
+            None
+        )
+        return mention(uid, player["name"] if player else "Captain")
+
+    cap_a = get_captain(team_a, captain_a)
+    cap_b = get_captain(team_b, captain_b)
+
+    announcement = (
+        "🎲 🎯 <b>IT'S TOSS TIME!</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔵 <b>{team_a['name']}</b>\n"
+        f"👑 Captain: {cap_a}\n\n"
+        f"🔴 <b>{team_b['name']}</b>\n"
+        f"👑 Captain: {cap_b}\n"
+    )
+
+    await message.answer(
+        announcement,
+        reply_markup=toss_kb()
+    )
 
 @router.callback_query(F.data.startswith("toss:"))
 async def toss_result(callback: CallbackQuery):
@@ -341,63 +376,61 @@ async def toss_result(callback: CallbackQuery):
         )
         return
 
-    winner = random.choice(["A", "B"])
-    loser = "B" if winner == "A" else "A"
-
-    await matches.update_one(
-        {"_id": match["_id"]},
-        {"$set": {
-            "toss_winner": winner,
-            "stage": "decision"
-        }}
-    )
-
     team_a = match["teams"]["A"]
     team_b = match["teams"]["B"]
 
     captain_a = team_a.get("captain_id")
     captain_b = team_b.get("captain_id")
 
-    def captain_name(team, captain_id):
+    if not captain_a or not captain_b:
+        await callback.answer(
+            "First select both captains!",
+            show_alert=True
+        )
+        return
+
+    winner = random.choice(["A", "B"])
+
+    await matches.update_one(
+        {"_id": match["_id"]},
+        {
+            "$set": {
+                "toss_winner": winner,
+                "stage": "decision"
+            }
+        }
+    )
+
+    def get_captain(team, uid):
         player = next(
-            (p for p in team["members"]
-             if p["user_id"] == captain_id),
+            (p for p in team["members"] if p["user_id"] == uid),
             None
         )
-        return mention(
-            captain_id,
-            player["name"] if player else "Captain"
-        )
+        return mention(uid, player["name"] if player else "Captain")
 
-    cap_a = captain_name(team_a, captain_a)
-    cap_b = captain_name(team_b, captain_b)
+    cap_a = get_captain(team_a, captain_a)
+    cap_b = get_captain(team_b, captain_b)
 
-    announcement = (
-        "🎲 <b>THE TOSS BEGINS!</b>\n"
+    winning_team = team_a if winner == "A" else team_b
+    winning_captain = cap_a if winner == "A" else cap_b
+
+    result = (
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🔵 <b>{team_a['name']}</b>\n"
-        f"👑 Captain: {cap_a}\n\n"
-        f"🔴 <b>{team_b['name']}</b>\n"
-        f"👑 Captain: {cap_b}\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "🎯 <b>IT'S TOSS TIME!</b>\n\n"
         f"🏆 <b>{team_a['name']}</b> — {cap_a}\n"
         "🆚\n"
         f"🏆 <b>{team_b['name']}</b> — {cap_b}\n\n"
-        f"🎉 <b>{team_a['name'] if winner == 'A' else team_b['name']} "
-        "WON THE TOSS!</b>\n\n"
-        f"👑 Winning Captain: "
-        f"{cap_a if winner == 'A' else cap_b}\n\n"
+        f"🎉 <b>{winning_team['name']} WON THE TOSS!</b>\n\n"
+        f"👑 <b>Winning Captain:</b> {winning_captain}\n\n"
         "Choose Bat or Bowl:"
     )
 
     await callback.message.answer(
-        announcement,
+        result,
         reply_markup=bat_bowl_kb()
     )
 
     await callback.answer()
-
+    
 @router.callback_query(F.data.startswith("decision:"))
 async def bat_bowl_decision(callback: CallbackQuery):
     match = await active_match(callback.message.chat.id)
