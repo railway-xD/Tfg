@@ -496,11 +496,19 @@ async def confirm_pick(callback: CallbackQuery):
 
     latest = await matches.find_one({"_id": match["_id"]})
 
-    if not latest:
-        return
+if not latest:
+    return
 
-    current = latest.get("current", {})
-    latest_inn = latest["innings"][latest["current_innings"] - 1]
+current = latest.get("current", {})
+latest_inn = latest["innings"][latest["current_innings"] - 1]
+
+if (
+    current.get("striker_id")
+    and current.get("non_striker_id")
+    and current.get("bowler_id")
+    and not latest.get("needs_new_bowler")
+):
+    await _announce_next_ball(callback.message, latest)
 
     # Opening selection handling continues in Part 2.
 
